@@ -190,7 +190,8 @@ ch_next
         cmp.l   a3,a2           any channels left?
         blt.s   ch_loop
 
-        moveq   #-1,d1
+;        moveq   #-1,d1
+        move.l  #$513638ff,d1   ; 'Q68' magic word + -1.b
         moveq   #-1,d2
         moveq   #mt.dmode,d0    find the current display mode
         trap    #1

@@ -208,36 +208,37 @@ disp_mode:
         addq.l  #2,bv_rip(a6)
         bsr     get_dm
         assert  sx_dmod,sx_llen-1,sx_xlim-3,sx_ylim-5
-        lea     sx_dmod(a4),a1
-        cmpi.w  #1,d4
-        bhi.s   dm_hires
-; QL modes 0 or 1 requested
-        bclr    #sx.q68m4,sx_dspm(a4)
-        lsl.w   #3,d4           ; now 0 or 8 for DISP_MODE 0/1
-        moveq   #8,d1
-        eor.b   d4,d1           ; flip bit 3 so DISP_MODE 0 -> MODE 8
-        bra.s   dm_setmd
+
+* obsolete code, now handled by MT.DMODE trap
+;        lea     sx_dmod(a4),a1
+;        cmpi.w  #1,d4
+;        bhi.s   dm_hires
+;; QL modes 0 or 1 requested
+;        bclr    #sx.q68m4,sx_dspm(a4) ; clear hi-res flag
+;        lsl.w   #3,d4           ; now 0 or 8 for DISP_MODE 0/1
+;        moveq   #8,d1
+;        eor.b   d4,d1           ; flip bit 3 so DISP_MODE 0 -> MODE 8
+;        bra.s   dm_setmd
 dm_hires:
         cmpi.w  #q68.dmax,d4    ; maximum allowed under Q68
         bhi.s   dm_bp
-        move.w  d4,d1           ; D1 = mode requested (2-7)
+        move.l  #$51363800,d1   ; 'Q68' magic word in bits 8-31
+        move.b  d4,d1           ; D1.B = mode requested (0-7)
         tst.b   d0
         bne.s   dm_sethi        ; we're already in hi-res mode!
         move.w  a0,d0
         bpl.s   dm_nc           ; sorry, dual screen not supported in hi-res
 dm_sethi:
-; reject 16-bit modes if not configured!
+        cmpi.b  #5,d1
+        beq.s   dm_bp           ; reject 5
+
+; reject 8/16-bit modes if not configured!
         GENIF   Q68_M33 = 0
-        cmpi.w  #4,d1
-        bne.s   dm_bp
+        btst    #sx..m33,d1
+        bne.s   dm_bp           ; reject 2, 3, 6 and 7
         ENDGEN
         
-        bset    #sx.q68m4,sx_dspm(a4) ; set hi-res bit
-;        move.b  d4,(a1)+        ; sx_dmod
-;        lsl.w   #1,d4
-;        move.w  llen_tab(pc,d4.w),(a1)+ ; sx_llen
-;        move.w  xlim_tab(pc,d4.w),(a1)+ ; sx_xlim
-;        move.w  ylim_tab(pc,d4.w),(a1)+ ; sx_ylim
+;        bset    #sx.q68m4,sx_dspm(a4) ; set hi-res bit
 
 ; MT.DMODE will handle all the nitty-gritty work of clearing the screen,
 ; resetting windows and finally informing the hardware of the mode change

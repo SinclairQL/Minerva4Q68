@@ -64,7 +64,7 @@
 650 END DEFine make_history
 660 :
 670 DEFine PROCedure make_rom
-672   v$="1.98q2"
+672   v$="1.98q3"
 680   IF FTEST(Min4Q68_dev$ & "M_ROM_english_bin") < 0: make_minerva v$
 690   IF FTEST(Min4Q68_dev$ & "extrarom_bin") < 0: make_extrarom
 700   base=ALCHP(96*1024)
@@ -95,7 +95,7 @@
 950 END DEFine make_rom
 960 :
 970 DEFine PROCedure make_lrespr
-972   v$="1.98q2"
+972   v$="1.98q3"
 980   IF FTEST(Min4Q68_dev$ & "M_ROM_english_bin") < 0: make_minerva v$
 990   IF FTEST(Min4Q68_dev$ & "extrarom_bin") < 0: make_extrarom
 1040   base=ALCHP(96*1024+32)

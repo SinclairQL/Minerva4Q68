@@ -22,6 +22,10 @@
 ; 
 ; Changelog:
 ;
+; 20260821 JB (v1.81, release)
+;
+;   Changed DISP_MODE to suit new MT.DMODE parameter ('NEW bug' fix).
+;
 ; 20260106 JB (v1.80, release)
 ;
 ;   No changes, just bumped version and year of release...
@@ -128,7 +132,7 @@
         xref    disp_mode,scr_base,scr_llen,scr_xlim,scr_ylim
         xref    free_fmem,alfm,ser_init,rom_end
 
-version	setstr	1.80
+version	setstr	1.81
 
 DEBUG    equ     0               ; set to 1 to display variables and result code
 EXDEBUG  equ     0               ; set to 1 for exception debugging

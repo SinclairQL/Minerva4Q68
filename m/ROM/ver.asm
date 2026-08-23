@@ -14,7 +14,7 @@ vers_sub   equ	'j2'
         ENDGEN
         
         GENIF   Q68 <> 0
-vers_sub   equ  'q2'
+vers_sub   equ  'q3'
         ENDGEN
 
 	end

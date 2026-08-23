@@ -26,15 +26,17 @@
 * 20251117 JB  v1.1     SER_BUFF 0,0 now allows for direct I/O
 * 20251123 JB  v1.10    Implemented second SER port (QIMSI Gold only)
 * 20251123 JB  v1.11    CONFIG block added
+* 20260119 JB  v1.12    basic I/O functions now handled separately from io.serio
 
         xdef    qcf_txb1,qcf_rxb1,qcf_txb2,qcf_rxb2,qcf_ser2,qcf_smem
 
-version setstr  1.11
+version setstr  1.12
 
         include 'm_inc_assert'
         include 'm_mincf'
         include 'm_inc_bv'
         include 'm_inc_err'
+        include 'm_inc_fs'
         include 'm_inc_io'
         include 'm_inc_mt'
         include 'm_inc_q'
@@ -48,7 +50,7 @@ version setstr  1.11
 
         offset  $28
 
-sp_io    ds.l   1               ; JSR instruction to io.serio (short jump)
+sp_serio ds.l   1               ; JSR instruction to io.serio (short jump)
          ds.l   1               ; address of pending i/o routine
          ds.l   1               ; address of fetch byte routine
          ds.l   1               ; address of send byte routine
@@ -170,14 +172,14 @@ ser2_ini
         bsr     getaddr                 ; external interrupt routine
         lea     sv_aschd(a3),a2
         bsr     getaddr                 ; scheduler loop routine
+        lea     sv_aio(a3),a2
+        bsr     getaddr                 ; i/o routine
         lea     dev_def,a0              ; open and close
-        lea     sv_aopen(a3),a2
         bsr     getaddr                 ; open routine
         bsr     getaddr                 ; close routine
-        move.l  a2,sv_aio(a3)           ; physical i/o routine
         move.w  #$4eb8,(a2)+            ; jsr absolute short
         move.w  io.serio,(a2)+          ; to io_serio
-        lea     4(a5),a0                ; pending / fetch byte / send byte
+        lea     sio_tab-fm_start(a5),a0 ; pending / fetch byte / send byte
         bsr     getaddr                 ; pending i/o routine
         bsr     getaddr                 ; fetch character
         bsr     getaddr                 ; send character
@@ -230,7 +232,8 @@ init_end
         rts
 
                     
-dev_def dc.w    open-*          ; open routine
+dev_def:
+        dc.w    open-*          ; open routine
         dc.w    close-*         ; close routine
 
 procs   dc.w    6               ; 5 procs but allow for long names
@@ -651,9 +654,95 @@ cl_rel
 fm_start:                       ; *** START OF FAST MEMORY BLOCK ***
         dc.w    ser_xint-*      ; external interrupt
         dc.w    ser_schd-*      ; scheduler loop
-        dc.w    pend-*          ; pending input
+        dc.w    ser_io-*
+sio_tab dc.w    pend-*          ; pending input
         dc.w    fbyte-*         ; fetch character
         dc.w    sbyte-*         ; send char
+
+* I/O routine
+* Handle string operations separately for efficiency
+* Everything else is handled by io.serio
+
+ser_io  cmpi.b  #io.sstrg,d0    ; basic I/O?
+        bls.s   io_basic        ; yes, handle directly
+        cmpi.b  #fs.load,d0
+        beq.s   fstrg_2         ; fs.load is io.fstrg with long length
+        cmpi.b  #fs.save,d0
+        beq.s   sstrg_2         ; fs.save is io.sstrg with long length
+io_rest jmp     sp_serio(a3)    ; call io.serio for anything else
+
+io_basic
+        moveq   #7,d7           ; chop off any unwanted bits
+        and.w   d0,d7
+        add.w   d7,d7
+        move.w  io_tab(pc,d7.w),d7 ; get table offset
+        jmp     io_tab(pc,d7.w) ; and do it
+
+io_tab  dc.w    pend-io_tab     ; io.pend
+        dc.w    fbyte-io_tab    ; io.fbyte
+        dc.w    io_rest-io_tab  ; io.fline
+        dc.w    fstrg-io_tab    ; io.fstrg
+        dc.w    io_rest-io_tab  ; BP
+        dc.w    sbyte-io_tab     ; io.sbyte
+        dc.w    io_rest-io_tab  ; BP
+        dc.w    sstrg-io_tab    ; io.sstrg
+
+fstrg   andi.l  #$ffff,d2       ; clear msw for io.fstrg
+fstrg_2 move.l  d2,d4           ; total bytes to handle
+        move.l  d1,d5           ; bytes received so far
+        bra.s   fstr_lp
+fstr_nxt
+        bsr     fbyte
+        tst.l   d0              ; NB: fbyte doesn't always set CCR
+        bne.s   fstr_end
+        move.b  d1,(a1)+
+        addq.l  #1,d5
+fstr_lp cmp.l   d4,d5           ; got all bytes?
+        bcs.s   fstr_nxt        ; no, get next
+        moveq   #0,d0
+fstr_end
+        move.l  d5,d1           ; update d1 on exit
+        rts
+
+sstrg   andi.l  #$ffff,d2
+sstrg_2 tst.b   ser_dir(a0)     ; is channel opened for transmit?
+        bgt     err_ro          ; no, return 'read only'
+        move.l  d2,d4           ; total bytes to send
+        move.l  d1,d5           ; bytes sent so far
+        move.l  sp_iobas(a3),a4 ; base of UART registers
+        move.l  sp_txq(a3),d0   ; do we have a tx queue?
+        beq.s   ssd_lp          ; no queue, direct output
+        move.l  d0,a2           ; set queue address
+        bra.s   sstr_lp
+sstr_nxt
+        move.b  (a1),d1         ; get next byte
+        bsr     sbyte_2         ; try sending it
+        tst.l   d0              ; NB: sbyte doesn't set CCR!
+        bne.s   sstr_end        ; on error bail out
+        addq.l  #1,a1           ; successfully sent, so bump pointer
+        addq.l  #1,d5           ; .. and byte count
+sstr_lp cmp.l   d4,d5           ; sent all bytes?
+        bcs.s   sstr_nxt        ; no, send next
+sstr_ok moveq   #0,d0           ; OK
+        bra.s   sstr_end
+
+; send string using direct I/O (fastest!)
+; entry is at ssd_lp with d0 = 0
+
+ssd_nxt:
+        btst    d0,(a4)         ; is transmit FIFO ready?
+        beq.s   sstr_nc         ; no, return 'not complete'
+        move.b  (a1)+,uart_txdata-uart_status(a4) ; send byte
+        addq.l  #1,d5           ; bump byte count
+ssd_lp  cmp.l   d4,d5           ; sent all bytes?
+        bcs.s   ssd_nxt         ; no, send next
+        bra.s   sstr_end        ; exit, updating d1 (d0=0)
+sstr_nc
+        moveq   #err.nc,d0      ; not complete
+sstr_end
+        move.l  d5,d1           ; update d1 on exit
+        rts
+
 
 ; check for pending input
 
@@ -700,7 +789,6 @@ fb_dir  bsr     pend_dir        ; test for pending input
         bne.s   fetchrts        ; nothing to fetch
         sf      pend_flg(a3)    ; clear pending input buffer
 fetchrts
-        tst.l   d0
         rts                     ; return (D0 and D1 have been set already)
 
 ; fetch a byte
@@ -742,6 +830,7 @@ sbyte:
         move.l  sp_txq(a3),d0   ; get tx queue
         beq.s   sb_diro         ; no queue, direct output
         move.l  d0,a2           ; set queue address
+sbyte_2:                        ; entry point for sstrg w/queue
         move.l  a3,-(sp)        ; save A3 (smashed by queue routines!)
         tst.b   sp_flow(a3)     ; flow control 'transparent'?
         ble.s   sb_put          ; no, go ahead

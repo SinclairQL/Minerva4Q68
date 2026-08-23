@@ -115,37 +115,76 @@ mt_dmode
         movem.l reglist,-(sp)
         jsr     ip_dspm(pc)     leaves a4 pointing at sysvar extension
         movem.l (sp)+,reg_on1
+
+; JB 20260821: Changed to avoid unintentional mode changes on Q68 hi-res modes
+; These modes can now ONLY be read or set by putting 'Q68' in bits 8-31 of D1,
+; and the extended mode number (0-7) in bits 0-7.
+; This avoids the problem that e.g. a NEW command did read the mode (which
+; previously always returned 0 in hi-res mode) and then set Q68 mode 0 (which
+; is actually QL mode 8!). See further ib/stop.asm.
+; When reading Q68 modes (using 'Q68'<<8+$ff in D1), it now returns the Q68
+; mode number in D1.B and bits 8-31 are preserved.
+; Any other value in bits 8-31 is treated as an 'old' MODE call, and will
+; behave as documented in the Minerva manual when in legacy QL mode (i.e.
+; Q68 mode 0 or 1), but will have NO effect when the Q68 is already
+; in hi-res mode! Use DISP_MODE 0 or 1 to revert to QL mode.
         
         GENIF   Q68_HIRES = 1
-        
-        btst    #sx.q68m4,sx_dspm(a4) ; test if we want Q68 extended mode
+
+        move.l  d1,d0
+        clr.b   d0
+        cmpi.l  #$51363800,d0   ; magic word: 'Q68' + null byte
+        beq.s   q68mode         ; handle extended modes
+        btst    #sx.q68m4,sx_dspm(a4) ; test if we are in Q68 hi-res mode
         beq.s   qlmode          ; no, ordinary QL modes
+        moveq   #0,d1           ; do nothing and return zero if in hi-res mode
+        bra.s   ret_mode
+q68mode
         tst.b   d1              ; d1.b is <0 for only reading mode
-        bmi.s   ret_ext
+        bmi.s   ret_ext         ; return Q68 extended mode number
         assert  sx_dmod,sx_llen-1,sx_xlim-3,sx_ylim-5
         lea     llen_tab(pc),a0
         lea     sx_dmod(a4),a1
         moveq   #7,d0
         and.b   d1,d0           ; limit extended modes to 0-7
         move.b  d0,q68_dmode    ; set Q68 screen mode
+        cmpi.b  #1,d0           ; was it 0 or 1?
+        ble.s   res_ql          ; yes, reset to non-hires QL modes
         move.b  d0,(a1)+        ; set sx_dmod
         add.w   d0,d0           ; double for index
         move.w  (a0,d0.w),(a1)+   ; set sx_llen
         move.w  xlim_tab-llen_tab(a0,d0.w),(a1)+ ; set sx_xlim
         move.w  ylim_tab-llen_tab(a0,d0.w),(a1)+ ; set sx_ylim
+        bset    #sx.q68m4,sx_dspm(a4) ; set hi-res flag
         move.l  #q68_screen,a5  ; base of Q68 extended screen buffer
         bclr    #3,sv_mcsta(a6) ; ensure no MODE 8 bit
+        move.l  a4,-(sp)        ; save a4 now
         jsr     sd_fresh(pc)    ; redraw windows
+        move.l  (sp)+,a4
 ret_ext
-        moveq   #0,d1           ; return d1 and d2 always 0 for compatibility
+        move.b  sx_dmod(a4),d1  ; pick up new mode
+        bne.s   ret_mode        ; OK if nonzero
+        btst    #3,sv_mcsta(a6) ; check for QL MODE 8
+        bne.s   ret_mode        ; QL MODE 8 is Q68 mode 0
+        move.b  #1,d1           ; if sx_dmod=0 and not QL MODE 8, it's mode 1
+ret_mode
         moveq   #0,d2
         movem.l reg_on1,-(sp)   ; re-stack
         bra     dm_exit         ; and exit
 
-qlmode
+; Selected Q68 mode 0 or 1, so reset to QL modes
+
+res_ql  bclr    #sx.q68m4,sx_dspm(a4) ; clear hi-res flag
+        lsl.b   #3,d0           ; now 0 or 8 for DISP_MODE 0/1
+        moveq   #8,d1
+        eor.b   d0,d1           ; flip bit 3 so DISP_MODE 0 -> MODE 8
+
+; handle 'ordinary' QL modes 4 and 8, including fancy dual-screen bits
+
+qlmode        
         assert  sx_dmod,sx_llen-1,sx_xlim-3,sx_ylim-5
         lea     sx_dmod(a4),a1  
-        clr.b   (a1)+           ; set sx_dmod always 0 for QL mode
+        clr.b   (a1)+           ; clear sx_dmod for QL mode
         move.w  #$80,(a1)+      ; sx_llen
         move.l  #512<<16+256,(a1) ; sx_xlim & sx_ylim
         

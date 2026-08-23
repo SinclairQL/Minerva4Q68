@@ -192,6 +192,11 @@ Contributors:
 
 Version history:
 ----------------
+- 23 August 2026: v1.81 released
+  - Fix: Executing commands like NEW, LOAD, and LRUN in DISP_MODE 4 caused display corruption.
+  - The MT.DMODE trap can now be used to set or read Q68 display modes. To distinguish from legacy QL modes 4 or 8, D1.L should contain $513638xx ('Q68' << 8 + xx), where xx stands for the Q68 display mode (0 to 7), or $FF to read the display mode. In case of a 'read mode' call, D1.B returns the Q68 display mode in bits 0-7 and bits 8-31 are preserved. Note that Q68 display modes 0 and 1 correspond to QL modes 8 and 4, respectively.
+  - Any MT.DMODE calls with anything other than 'Q68' in bits 8-31 of D1 are treated as legacy MT.DMODE calls. When the Q68 is in high-resolution (1024x768) mode, calling MT.DMODE will have no effect and always returns 0 in D1 for compatibility.
+  - Optimised serial port handling at high speeds.
 - 06 January 2026: v1.80 released
   - Added support for second USB serial port, currently only supported by QIMSI Gold versions with firmware v1.20 or higher. Syntax of SER_xxx commands amended to allow for an optional port number.
   - MACHINE now returns correct machine number for non-Q68 devices (Q68=18, Qzero=19, QIMSI Gold=21).
